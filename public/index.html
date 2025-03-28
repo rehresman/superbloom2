@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Collaborative Web Synthesizer</title>
+  <style>
+    body {
+      font-family: 'Arial', sans-serif;
+      background-color: #1e1e1e;
+      color: #f0f0f0;
+      margin: 0;
+      padding: 20px;
+    }
+    
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    
+    header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    
+    h1 {
+      color: #61dafb;
+    }
+    
+    .start-audio {
+      margin: 15px 0;
+      padding: 10px;
+      background-color: #2d2d2d;
+      border-radius: 5px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    
+    .primary-btn {
+      background-color: #28a745;
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      font-size: 16px;
+      border-radius: 5px;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+    
+    .primary-btn:hover {
+      background-color: #218838;
+    }
+    
+    #audioStatus {
+      font-size: 0.9rem;
+      color: #aaa;
+    }
+    
+    .connection {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding: 15px;
+      background-color: #2d2d2d;
+      border-radius: 5px;
+    }
+    
+    .connection input {
+      padding: 8px;
+      width: 200px;
+      background-color: #3a3a3a;
+      border: 1px solid #555;
+      color: white;
+      border-radius: 3px;
+    }
+    
+    button {
+      background-color: #61dafb;
+      color: #0a0a0a;
+      border: none;
+      padding: 8px 15px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    
+    button:hover {
+      background-color: #4fa8c7;
+    }
+    
+    #connectionStatus {
+      padding: 5px 10px;
+      border-radius: 3px;
+    }
+    
+    .connected {
+      background-color: #2ecc71;
+    }
+    
+    .disconnected {
+      background-color: #e74c3c;
+    }
+    
+    .synth-controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+    
+    .control {
+      background-color: #2d2d2d;
+      padding: 15px;
+      border-radius: 5px;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .control label {
+      margin-bottom: 10px;
+      font-weight: bold;
+      color: #61dafb;
+    }
+    
+    .control input[type="range"] {
+      width: 100%;
+      -webkit-appearance: none;
+      height: 8px;
+      background: #3a3a3a;
+      border-radius: 4px;
+      outline: none;
+      margin-bottom: 8px;
+    }
+    
+    .control input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      background: #61dafb;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+    
+    .value-display {
+      text-align: center;
+      font-size: 0.8rem;
+      color: #ccc;
+    }
+    
+    .keyboard {
+      display: flex;
+      justify-content: center;
+      margin-top: 30px;
+      position: relative;
+      height: 200px;
+    }
+    
+    .key {
+      position: relative;
+      cursor: pointer;
+      transition: background-color 0.1s;
+    }
+    
+    .white-key {
+      background-color: white;
+      width: 40px;
+      height: 180px;
+      margin: 0 2px;
+      border-radius: 0 0 5px 5px;
+      z-index: 1;
+    }
+    
+    .black-key {
+      background-color: black;
+      width: 30px;
+      height: 110px;
+      position: absolute;
+      z-index: 2;
+      border-radius: 0 0 5px 5px;
+    }
+    
+    .white-key.active {
+      background-color: #c3e6ff;
+    }
+    
+    .black-key.active {
+      background-color: #333;
+    }
+    
+    .instructions {
+      margin-top: 30px;
+      padding: 15px;
+      background-color: #2d2d2d;
+      border-radius: 5px;
+      font-size: 0.9rem;
+    }
+    
+    .note-label {
+      position: absolute;
+      bottom: 10px;
+      width: 100%;
+      text-align: center;
+      font-size: 12px;
+      color: #333;
+    }
+    
+    .black-key .note-label {
+      color: #ddd;
+      bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Collaborative Web Synthesizer</h1>
+      <p>Play together with a friend in real-time</p>
+      <div class="start-audio">
+        <button id="startAudioBtn" class="primary-btn">Start Audio</button>
+        <span id="audioStatus">Audio not initialized. Click the button to enable sound.</span>
+      </div>
+    </header>
+    
+    <div class="connection">
+      <div>
+        <input type="text" id="roomId" placeholder="Enter room name">
+        <button id="joinRoom">Join Room</button>
+        <button id="leaveRoom">Leave Room</button>
+      </div>
+      <div>
+        <span>Status: </span>
+        <span id="connectionStatus" class="disconnected">Disconnected</span>
+        <span id="participantCount"></span>
+      </div>
+    </div>
+    
+    <div class="synth-controls">
+      <div class="control">
+        <label for="cutoff">Filter Cutoff</label>
+        <input type="range" id="cutoff" class="control-slider" data-cc="74" min="0" max="1" step="0.01" value="0.8">
+        <div class="value-display" id="cutoffValue">12000 Hz</div>
+      </div>
+      
+      <div class="control">
+        <label for="resonance">Filter Resonance</label>
+        <input type="range" id="resonance" class="control-slider" data-cc="71" min="0" max="1" step="0.01" value="0">
+        <div class="value-display" id="resonanceValue">1.0</div>
+      </div>
+      
+      <div class="control">
+        <label for="drive">Drive</label>
+        <input type="range" id="drive" class="control-slider" data-cc="76" min="0" max="1" step="0.01" value="0">
+        <div class="value-display" id="driveValue">1.0</div>
+      </div>
+      
+      <div class="control">
+        <label for="oscillatorMix">Oscillator Mix</label>
+        <input type="range" id="oscillatorMix" class="control-slider" data-cc="77" min="0" max="1" step="0.01" value="0">
+        <div class="value-display" id="oscillatorMixValue">0.0</div>
+      </div>
+      
+      <div class="control">
+        <label for="vibrato">Vibrato</label>
+        <input type="range" id="vibrato" class="control-slider" data-cc="1" min="0" max="1" step="0.01" value="0">
+        <div class="value-display" id="vibratoValue">0.0</div>
+      </div>
+    </div>
+    
+    <div class="keyboard">
+      <!-- White keys -->
+      <div class="key white-key" data-note="60"><div class="note-label">C3</div></div>
+      <div class="key white-key" data-note="62"><div class="note-label">D3</div></div>
+      <div class="key white-key" data-note="64"><div class="note-label">E3</div></div>
+      <div class="key white-key" data-note="65"><div class="note-label">F3</div></div>
+      <div class="key white-key" data-note="67"><div class="note-label">G3</div></div>
+      <div class="key white-key" data-note="69"><div class="note-label">A3</div></div>
+      <div class="key white-key" data-note="71"><div class="note-label">B3</div></div>
+      <div class="key white-key" data-note="72"><div class="note-label">C4</div></div>
+      <div class="key white-key" data-note="74"><div class="note-label">D4</div></div>
+      <div class="key white-key" data-note="76"><div class="note-label">E4</div></div>
+      <div class="key white-key" data-note="77"><div class="note-label">F4</div></div>
+      <div class="key white-key" data-note="79"><div class="note-label">G4</div></div>
+      <div class="key white-key" data-note="81"><div class="note-label">A4</div></div>
+      <div class="key white-key" data-note="83"><div class="note-label">B4</div></div>
+      
+      <!-- Black keys -->
+      <div class="key black-key" data-note="61" style="left: 25px;"><div class="note-label">C#3</div></div>
+      <div class="key black-key" data-note="63" style="left: 69px;"><div class="note-label">D#3</div></div>
+      <div class="key black-key" data-note="66" style="left: 157px;"><div class="note-label">F#3</div></div>
+      <div class="key black-key" data-note="68" style="left: 201px;"><div class="note-label">G#3</div></div>
+      <div class="key black-key" data-note="70" style="left: 245px;"><div class="note-label">A#3</div></div>
+      <div class="key black-key" data-note="73" style="left: 333px;"><div class="note-label">C#4</div></div>
+      <div class="key black-key" data-note="75" style="left: 377px;"><div class="note-label">D#4</div></div>
+      <div class="key black-key" data-note="78" style="left: 465px;"><div class="note-label">F#4</div></div>
+      <div class="key black-key" data-note="80" style="left: 509px;"><div class="note-label">G#4</div></div>
+      <div class="key black-key" data-note="82" style="left: 553px;"><div class="note-label">A#4</div></div>
+    </div>
+    
+    <div class="instructions">
+      <h3>How to Use:</h3>
+      <ol>
+        <li>Enter a room name and click "Join Room" to connect with another player.</li>
+        <li>Play notes on your MIDI keyboard or use the virtual keyboard above.</li>
+        <li>Adjust the synth controls to shape the sound.</li>
+        <li>All your notes and control changes will be sent to the other player in the same room.</li>
+      </ol>
+      <p><strong>Note:</strong> For the best experience, use a MIDI keyboard connected to your computer. Make sure to allow MIDI access when prompted by your browser.</p>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+  <script src="/synth.js"></script>
+  <script src="/synth-controller.js"></script>
+</body>
+</html>
