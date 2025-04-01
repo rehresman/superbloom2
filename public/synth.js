@@ -11,7 +11,7 @@ let isConnected = false;
 const controls = {
   cutoff: 20*Math.pow(1.0366329, 128),
   resonance: 0,
-  drive: 1,
+  drive: 0,
   oscillatorMix: 0,
   vibrato: 0
 };
@@ -19,24 +19,52 @@ const controls = {
 // Initialize Tone.js synth
 let synthInitialized = false;
 let leftSynth, rightSynth; // Synth instances for stereo output
+let leftAnalyzer, rightAnalyzer;
 
 // Create a properly initialized synth
 function initSynth() {
   if (synthInitialized) return true;
   
   try {
-    // Create Master Effects Chain
-    const masterVolume = new Tone.Volume(-21).toDestination();
-    
+    disposeSynth(); // Disconnect any previous synth connections
+
+    // create master compressor for extreme resonance
     const masterCompressor = new Tone.Compressor({
       ratio: 4,
-      threshold: -15,
-      attack: 0.05,
-      release: 0.05
-    }).connect(masterVolume);
+      attack: 0.1,
+      release: 0.05,
+      threshold: -24,
+      knee: 10
+    }).toDestination();
+
+    // Create Master Effects Chain
+    const masterVolume = new Tone.Volume(-21);
+
+    // pregain for character
+    const pregain = new Tone.Gain(controls.drive);
     
+    // character waveshaper
+    const character = createCharacterWaveshaper();
+
+    // wet/dry mix of character
+    const crossFade = new Tone.CrossFade(controls.drive);
+
+    // Add vibrato effect
+      const vibrato = new Tone.Vibrato({
+        frequency: 0.66,
+        depth: 0,
+        type: "sine"
+      });
+
+    // panners for stereo output
+    const leftPanner = new Tone.Panner(-1);
+    const rightPanner = new Tone.Panner(1);
+
+    // create analyzers for left and right channels
+    leftAnalyzer = new Tone.Analyser('waveform', 1024);
+    rightAnalyzer = new Tone.Analyser('waveform', 1024);
     
-    // Create a custom MonoSynth that mimics your SuperCollider synth
+    // synth definition
     const customSynthDef = {
       oscillator: getOscillatorType(controls.oscillatorMix),
       envelope: {
@@ -60,38 +88,46 @@ function initSynth() {
       }
     };
     
-    const leftPanner = new Tone.Panner(-1).connect(masterCompressor);
-    const rightPanner = new Tone.Panner(1).connect(masterCompressor);
     
     // Create two synths - one for each channel
-    leftSynth = new Tone.PolySynth(Tone.MonoSynth, customSynthDef).connect(leftPanner);
-    rightSynth = new Tone.PolySynth(Tone.MonoSynth, customSynthDef).connect(rightPanner); 
+    leftSynth = new Tone.PolySynth(Tone.MonoSynth, customSynthDef);
+    rightSynth = new Tone.PolySynth(Tone.MonoSynth, customSynthDef); 
 
-    // Add vibrato effect
-    const vibrato = new Tone.Vibrato({
-      frequency: 5,
-      depth: 0,
-      type: "sine"
-    }).connect(masterCompressor);
-    
-    // Add distortion for drive parameter
-    const distortion = new Tone.Distortion({
-      distortion: 0,
-      wet: 0
-    }).connect(masterCompressor);
-    
-    // Create a signal chain that allows us to update parameters
-    for( let polySynth of [leftSynth, rightSynth]) {
-      polySynth.connect(vibrato);
-      vibrato.connect(distortion);
-      // Store these effects to update them later
-      polySynth._vibrato = vibrato;
-      polySynth._distortion = distortion;
-    }
+    // connect synth chains
+    //leftSynth.chain(vibrato, pregain, character, leftAnalyzer, leftPanner, masterVolume);
+    //rightSynth.chain(vibrato, pregain, character, rightAnalyzer, rightPanner, masterVolume);
+
+
+    leftSynth.connect(vibrato);
+    vibrato.connect(crossFade.a);
+    vibrato.connect(pregain);
+    pregain.connect(character);
+    character.connect(crossFade.b);
+    crossFade.connect(leftAnalyzer);
+    vibrato.chain(leftAnalyzer, leftPanner, masterVolume, masterCompressor);
+
+    rightSynth.connect(vibrato);
+    vibrato.connect(crossFade.a);
+    vibrato.connect(pregain);
+    pregain.connect(character);
+    character.connect(crossFade.b);
+    crossFade.connect(rightAnalyzer);
+    vibrato.chain(rightAnalyzer, rightPanner, masterVolume, masterCompressor);
+
+    leftSynth._pregain = pregain;
+    rightSynth._pregain = pregain;
+
+    leftSynth._crossFade = crossFade;
+    rightSynth._crossFade = crossFade;
+
+    leftSynth._vibrato = vibrato;
+    rightSynth._vibrato = vibrato;
+
 
     synthInitialized = true;
     console.log("Synth initialized successfully");
     updateUIStatus("Synth ready! You can play now.");
+
     return true;
   } catch (error) {
     console.error("Error initializing synth:", error);
@@ -105,8 +141,8 @@ function updateSynthParams() {
   if (!synthInitialized || !leftSynth) return;
   
   try {
-    // Update all voices
     for( let polySynth of [leftSynth, rightSynth]) {
+      // update filter
       polySynth.set({
         filter: {
           Q: controls.resonance / 3.5
@@ -116,16 +152,14 @@ function updateSynthParams() {
           release: 7.5 + controls.cutoff / 64
         }
       });
+
       // Update vibrato depth based on vibrato control
-      polySynth._vibrato.depth.value = controls.vibrato / 10;
+      polySynth._vibrato.depth.value = controls.vibrato / 127;
       
-      // Update distortion based on drive control
-      if (controls.drive > 1) {
-        polySynth._distortion.wet.value = (controls.drive - 1) / 4;
-        polySynth._distortion.distortion = Math.min(0.9, (controls.drive - 1) / 4);
-      } else {
-        polySynth._distortion.wet.value = 0;
-      }
+      // update drive and character wet/dry
+      polySynth._pregain.gain.value = controls.drive * .09;
+      polySynth._crossFade.fade.value = controls.drive > 127 ? 0 : controls.drive /127;
+      console.log(polySynth._crossFade.fade.value);
       
       // Update oscillator type/mix for all active voices
       polySynth.set({oscillator: getOscillatorType(controls.oscillatorMix)});
@@ -152,129 +186,50 @@ function getOscillatorType(oscillatorMix) {
   }
 }
 
-
-
-
-
-
-
-// Create a custom Tone.js effect for soft clipping using hyperbolic tangent (tanh)
-class SoftClipper extends Tone.ToneAudioNode {
-  constructor(options) {
-    super();
-    // Default options
-    options = Object.assign({
-      drive: 1,
-      wet: 1
-    }, options);
-
-    // Create the waveshaper with our tanh transfer function
-    this._shaper = new Tone.WaveShaper({
-      curve: this._generateTanhCurve(options.drive),
-      oversample: "4x" // Reduce aliasing
-    });
-
-    // Create a wet/dry control
-    this._wet = new Tone.CrossFade(options.wet);
-
-    // Connect input → crossfade input 1
-    this.input.connect(this._wet.a);
-    // Connect input → waveshaper → crossfade input 2
-    this.input.connect(this._shaper);
-    this._shaper.connect(this._wet.b);
-    // Connect crossfade output → output
-    this._wet.connect(this.output);
-
-    // Set up parameters that can be controlled
-    this.drive = options.drive;
-    this.wet = options.wet;
-  }
-
-  // Generate the tanh curve based on drive amount
-  _generateTanhCurve(drive) {
-    const samples = 2048;
-    const curve = new Float32Array(samples);
-    
-    // Scaling factor - higher values mean more distortion
-    const scaleFactor = drive * 3; // You can adjust this multiplier to taste
-    
-    for (let i = 0; i < samples; i++) {
-      // Convert range from 0 to 2048 into -1 to 1
-      const x = (i / (samples - 1)) * 2 - 1;
-      
-      // Apply tanh function
-      // tanh naturally maps to the -1 to 1 range, so no additional normalization is needed
-      curve[i] = Math.tanh(x * scaleFactor);
-    }
-    
-    return curve;
-  }
-
-  // Getters and setters for parameters
-  get drive() {
-    return this._drive;
-  }
-
-  set drive(value) {
-    this._drive = value;
-    // Update the waveshaper curve when drive changes
-    this._shaper.curve = this._generateTanhCurve(value);
-  }
-
-  get wet() {
-    return this._wet.fade.value;
-  }
-
-  set wet(value) {
-    this._wet.fade.value = value;
-  }
-
-  // Method to dispose of all created nodes
-  dispose() {
-    super.dispose();
-    this._shaper.dispose();
-    this._wet.dispose();
-    return this;
-  }
+function createCharacterWaveshaper() {
+  const waveshaper = new Tone.WaveShaper((val) => Math.tanh(val), 1024);
+  return waveshaper;
 }
 
-// Example usage:
-function createSoftClipperExample() {
-  // Create an oscillator as an input source
-  const osc = new Tone.Oscillator({
-    frequency: 220,
-    type: "sawtooth"
-  }).start();
-
-  // Create our soft clipper effect
-  const softClipper = new SoftClipper({
-    drive: 3, // Adjust the drive amount
-    wet: 1    // Fully wet signal
-  });
-
-  // Connect the oscillator to the clipper and then to the master output
-  osc.connect(softClipper);
-  softClipper.connect(Tone.getDestination());
-
-  // Optional: Create a UI to control the drive parameter
-  const driveSlider = document.createElement("input");
-  driveSlider.type = "range";
-  driveSlider.min = "0.1";
-  driveSlider.max = "10";
-  driveSlider.step = "0.1";
-  driveSlider.value = "3";
-  driveSlider.addEventListener("input", (e) => {
-    softClipper.drive = parseFloat(e.target.value);
-  });
-  document.body.appendChild(driveSlider);
-
-  // Return the objects for further manipulation
-  return { osc, softClipper };
+function disposeSynth() {
+  if (leftSynth) {
+    leftSynth.disconnect();
+    leftSynth.dispose();
+    leftSynth = null;
+  }
+  if (rightSynth) {
+    rightSynth.disconnect();
+    rightSynth.dispose();
+    rightSynth = null;
+  }
+  
+  // Add cleanup for analyzers
+  if (leftAnalyzer) {
+    leftAnalyzer.dispose();
+    leftAnalyzer = null;
+  }
+  if (rightAnalyzer) {
+    rightAnalyzer.dispose();
+    rightAnalyzer = null;
+  }
+  
+  synthInitialized = false;
+  console.log("Synths disposed.");
 }
 
-// To use this in a web page: 
-// 1. Include Tone.js in your project
-// 2. Define the SoftClipper class as above
-// 3. Call createSoftClipperExample() when ready to create audio
+// Log analyzer values when needed
+function checkAnalyzer() {
+  const waveform = leftAnalyzer.getValue();
+  console.log("Analyzer data:", waveform);
+  
+  // Check if there's actual signal (non-zero values)
+  const hasSignal = waveform.some(value => value !== 0);
+  console.log("Signal detected:", hasSignal);
+  
+  // Optionally, you could look at signal levels
+  const maxLevel = Math.max(...waveform.map(Math.abs));
+  console.log("Max signal level:", maxLevel);
+}
 
- // Call this to see the example in action
+// Call this function when needed, like during note triggering
+// or set an interval to check regularly
