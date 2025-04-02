@@ -22,14 +22,14 @@ const SynthPiano = () => {
     }
   }, [audioStarted, audioInitialized, startAudio]);
 
-  const handleNoteOn = (midiNumber) => {
+  const handleNoteOn = (midiNumber: number) => {
     if (!audioStarted) {
       setAudioStarted(true);
     }
     noteOn(midiNumber, 100); // Default velocity of 100
   };
 
-  const handleNoteOff = (midiNumber) => {
+  const handleNoteOff = (midiNumber: number) => {
     noteOff(midiNumber);
   };
 

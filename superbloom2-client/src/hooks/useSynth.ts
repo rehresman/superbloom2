@@ -1,15 +1,25 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import * as Tone from "tone";
-import io from "socket.io-client";
+import io, { Socket } from "socket.io-client";
 
-export function useSynth(initialControls = {}) {
+interface Controls {
+  cutoff: number;
+  resonance: number;
+  drive: number;
+  oscillatorMix: number;
+  vibrato: number;
+}
+
+export function useSynth(initialControls: Partial<Controls> = {}) {
   const [isAudioRunning, setIsAudioRunning] = useState(false);
-  const [midiDevices, setMidiDevices] = useState([]);
-  const [statusMessage, setStatusMessage] = useState("");
-  const [socket, setSocket] = useState(null); // State to hold the socket instance
+  const [midiDevices, setMidiDevices] = useState<string[]>([]);
+  const [statusMessage, setStatusMessage] = useState<string>("");
+  const [socket, setSocket] = useState<Socket | null>(null); // State to hold the socket instance
   const synthInitialized = useRef(false);
-  const activeNotes = useRef(new Map());
-  const controls = useRef({
+  const activeNotes = useRef<
+    Map<number, { noteName: string; velocity: number }>
+  >(new Map());
+  const controls = useRef<Controls>({
     cutoff: 20 * Math.pow(1.0366329, 128),
     resonance: 0,
     drive: 1,
@@ -17,8 +27,8 @@ export function useSynth(initialControls = {}) {
     vibrato: 0,
     ...initialControls, // Merge initial controls
   });
-  const leftSynth = useRef(null);
-  const rightSynth = useRef(null);
+  const leftSynth = useRef<Tone.PolySynth | null>(null);
+  const rightSynth = useRef<Tone.PolySynth | null>(null);
 
   // Function to connect to the WebSocket
   const connectSocket = useCallback(() => {
@@ -85,7 +95,7 @@ export function useSynth(initialControls = {}) {
       const leftPanner = new Tone.Panner(-1);
       const rightPanner = new Tone.Panner(1);
 
-      const customSynthDef = {
+      const customSynthDef: Tone.PolySynthOptions = {
         oscillator: getOscillatorType(controls.current.oscillatorMix),
         envelope: {
           attack: 1,
@@ -112,30 +122,33 @@ export function useSynth(initialControls = {}) {
       rightSynth.current = new Tone.PolySynth(Tone.MonoSynth, customSynthDef);
 
       // Correctly chain the nodes
-      leftSynth.current.connect(vibrato);
-      vibrato.connect(pregain);
-      pregain.connect(character);
-      character.connect(crossFade.a);
-      crossFade.connect(leftPanner);
-      leftPanner.connect(masterVolume);
-      masterVolume.connect(masterCompressor);
-
-      rightSynth.current.connect(vibrato);
-      vibrato.connect(pregain);
-      pregain.connect(character);
-      character.connect(crossFade.b);
-      crossFade.connect(rightPanner);
-      rightPanner.connect(masterVolume);
+      leftSynth.current.chain(
+        vibrato,
+        pregain,
+        character,
+        crossFade.a,
+        leftPanner,
+        masterVolume,
+        masterCompressor
+      );
+      rightSynth.current.chain(
+        vibrato,
+        pregain,
+        character,
+        crossFade.b,
+        rightPanner,
+        masterVolume
+      );
 
       masterCompressor.toDestination();
 
       // Assign additional properties to synths for parameter updates
-      leftSynth.current._vibrato = vibrato;
-      rightSynth.current._vibrato = vibrato;
-      leftSynth.current._pregain = pregain;
-      rightSynth.current._pregain = pregain;
-      leftSynth.current._crossFade = crossFade;
-      rightSynth.current._crossFade = crossFade;
+      (leftSynth.current as any)._vibrato = vibrato;
+      (rightSynth.current as any)._vibrato = vibrato;
+      (leftSynth.current as any)._pregain = pregain;
+      (rightSynth.current as any)._pregain = pregain;
+      (leftSynth.current as any)._crossFade = crossFade;
+      (rightSynth.current as any)._crossFade = crossFade;
 
       synthInitialized.current = true;
       console.log("Synth initialized successfully");
@@ -147,13 +160,14 @@ export function useSynth(initialControls = {}) {
   };
 
   // Update synth parameters dynamically
-  const updateControls = useCallback((newControls) => {
+  const updateControls = useCallback((newControls: Partial<Controls>) => {
     controls.current = { ...controls.current, ...newControls };
     updateSynthParams();
   }, []);
 
   const updateSynthParams = () => {
-    if (!synthInitialized.current || !leftSynth.current) return;
+    if (!synthInitialized.current || !leftSynth.current || !rightSynth.current)
+      return;
 
     try {
       for (let polySynth of [leftSynth.current, rightSynth.current]) {
@@ -166,14 +180,18 @@ export function useSynth(initialControls = {}) {
         });
 
         // Ensure vibrato, pregain, and crossFade are updated
-        if (polySynth._vibrato) {
-          polySynth._vibrato.depth.value = controls.current.vibrato / 127;
+        const vibrato = (polySynth as any)._vibrato as Tone.Vibrato;
+        const pregain = (polySynth as any)._pregain as Tone.Gain;
+        const crossFade = (polySynth as any)._crossFade as Tone.CrossFade;
+
+        if (vibrato) {
+          vibrato.depth.value = controls.current.vibrato / 127;
         }
-        if (polySynth._pregain) {
-          polySynth._pregain.gain.value = controls.current.drive * 0.09;
+        if (pregain) {
+          pregain.gain.value = controls.current.drive * 0.09;
         }
-        if (polySynth._crossFade) {
-          polySynth._crossFade.fade.value =
+        if (crossFade) {
+          crossFade.fade.value =
             controls.current.drive > 127 ? 0 : controls.current.drive / 127;
         }
 
@@ -227,7 +245,7 @@ export function useSynth(initialControls = {}) {
   };
 
   // Handle note on
-  const noteOn = (note, velocity, isLocal = true) => {
+  const noteOn = (note: number, velocity: number, isLocal = true) => {
     const noteName = Tone.Frequency(note, "midi").toNote();
     console.log(`noteOn called: ${noteName}, velocity: ${velocity}`);
     if (Tone.context.state !== "running") {
@@ -241,7 +259,12 @@ export function useSynth(initialControls = {}) {
     }
   };
 
-  const triggerNote = (noteName, midiNote, velocity, isLocal) => {
+  const triggerNote = (
+    noteName: string,
+    midiNote: number,
+    velocity: number,
+    isLocal: boolean
+  ) => {
     if (!synthInitialized.current) {
       console.warn("Can't play note - synth not initialized");
       return;
@@ -250,7 +273,7 @@ export function useSynth(initialControls = {}) {
     try {
       activeNotes.current.set(midiNote, { noteName, velocity });
       for (let polySynth of [leftSynth.current, rightSynth.current]) {
-        polySynth.triggerAttack(noteName, Tone.now(), velocity / 127);
+        polySynth?.triggerAttack(noteName, Tone.now(), velocity / 127);
       }
       console.log(`Triggering note: ${noteName} on synth`);
 
@@ -267,19 +290,19 @@ export function useSynth(initialControls = {}) {
   };
 
   // Handle note off
-  const noteOff = (note, isLocal = true) => {
+  const noteOff = (note: number, isLocal = true) => {
     if (!synthInitialized.current) return;
 
     try {
       if (activeNotes.current.has(note)) {
         const noteInfo = activeNotes.current.get(note);
-        const noteName = noteInfo.noteName;
+        const noteName = noteInfo?.noteName;
 
         console.log(`noteOff called: ${noteName}`);
 
         // Trigger release for both synths
         for (let polySynth of [leftSynth.current, rightSynth.current]) {
-          polySynth.triggerRelease(noteName, Tone.now());
+          polySynth?.triggerRelease(noteName, Tone.now());
         }
 
         // Remove the note from activeNotes
@@ -311,9 +334,9 @@ export function useSynth(initialControls = {}) {
     }
   };
 
-  const onMIDISuccess = (midiAccess) => {
+  const onMIDISuccess = (midiAccess: WebMidi.MIDIAccess) => {
     const inputs = midiAccess.inputs.values();
-    const devices = [];
+    const devices: string[] = [];
     for (let input of inputs) {
       input.onmidimessage = handleMIDIMessage;
       devices.push(input.name);
@@ -322,12 +345,12 @@ export function useSynth(initialControls = {}) {
     setStatusMessage(`Connected to ${devices.length} MIDI device(s)`);
   };
 
-  const onMIDIFailure = (error) => {
+  const onMIDIFailure = (error: Error) => {
     console.error("Could not access your MIDI devices:", error);
     setStatusMessage("Failed to access MIDI devices");
   };
 
-  const handleMIDIMessage = (event) => {
+  const handleMIDIMessage = (event: WebMidi.MIDIMessageEvent) => {
     const [status, data1, data2] = event.data;
     const command = status & 0xf0;
 
@@ -348,7 +371,7 @@ export function useSynth(initialControls = {}) {
     }
   };
 
-  const controlChange = (cc, value, isLocal = true) => {
+  const controlChange = (cc: number, value: number, isLocal = true) => {
     try {
       switch (cc) {
         case 1:
@@ -380,7 +403,7 @@ export function useSynth(initialControls = {}) {
     }
   };
 
-  const getOscillatorType = (oscillatorMix) => {
+  const getOscillatorType = (oscillatorMix: number) => {
     if (oscillatorMix < 64) {
       return {
         type: "sawtooth",
