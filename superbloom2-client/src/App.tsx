@@ -1,11 +1,9 @@
 import "./App.css";
-import { OnScreenPiano } from "./components/OnScreenPiano";
-import SynthPiano from "./components/ReactPiano";
+import SynthPiano from "./components/SynthPiano";
 
 function App() {
   return (
     <>
-      {/* <OnScreenPiano /> */}
       <SynthPiano />
     </>
   );
