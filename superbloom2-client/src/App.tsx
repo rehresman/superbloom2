@@ -1,10 +1,10 @@
 import "./App.css";
-import SynthPiano from "./components/SynthPiano";
+import VirtualMIDIController from "./components/VirtualMIDIController";
 
 function App() {
   return (
     <>
-      <SynthPiano />
+      <VirtualMIDIController />
     </>
   );
 }
