@@ -1,65 +1,50 @@
 import { useState } from "react";
 import { Piano, KeyboardShortcuts, MidiNumbers } from "react-piano";
 import "react-piano/dist/styles.css";
-import { useSynth } from "../hooks/useSynth";
 import { useMIDI } from "../hooks/useMIDI";
+import { useSocket } from "../hooks/useSocket";
+import { useAudioEngine } from "../hooks/useAudioEngine";
 import ControlSlider from "./ControlSlider";
-import { MIDI_CC_MAP } from "../hooks/useMIDI";  // Import from useMIDI
-
-interface Controls {
-  cutoff: number;
-  resonance: number;
-  drive: number;
-  oscillatorMix: number;
-  vibrato: number;
-}
 
 const VirtualMIDIController = () => {
-  const { 
-    startAudio,
-    statusMessage: synthStatus,
-    connectSocket,
-    controlValues,
-    convertMidiToSynthParams,
-    controlChange,
-  } = useSynth();
-
-  const { midiOutput, statusMessage: midiStatus } = useMIDI({
-    onNoteOn: () => {},
-    onNoteOff: () => {},
-    onControlChange: (cc: number, value: number) => {
-      const controlName = MIDI_CC_MAP[cc as keyof typeof MIDI_CC_MAP];
-      if (controlName) {
-        controlChange(controlName, value, false);
-      }
-    },
-  });
-
   const [audioStarted, setAudioStarted] = useState(false);
-  const [channel] = useState(0); // MIDI channel 1 (zero-based)
+
+  const audioEngine = useAudioEngine();
+  const { connectSocket } = useSocket();
+
+  const clearAllNotes = () => {
+    // Send note off messages for all possible MIDI notes (0-127)
+    for (let note = 0; note < 128; note++) {
+      noteOff(note);
+    }
+  };
+
+  const startAudioAndInit = async () => {
+    const success = await audioEngine.startAudio();
+    if (success) {
+      setAudioStarted(true);
+      clearAllNotes();
+    }
+    return success;
+  };
+
+  const { 
+    statusMessage,
+    noteOn,
+    noteOff,
+    handleControlChange,
+  } = useMIDI(audioEngine, startAudioAndInit);
 
   const handleNoteOn = (midiNumber: number) => {
     if (!audioStarted) {
       setAudioStarted(true);
-      startAudio();
+      startAudioAndInit();
     }
-    if (midiOutput) {
-      midiOutput.send([0x90 + channel, midiNumber, 100]); // Note On
-    }
+    noteOn(midiNumber, 100);
   };
 
   const handleNoteOff = (midiNumber: number) => {
-    if (midiOutput) {
-      midiOutput.send([0x80 + channel, midiNumber, 0]); // Note Off
-    }
-  };
-
-  const handleControlChange = (controlName: keyof Controls, value: number) => {
-    const ccNumber = Object.entries(MIDI_CC_MAP).find(([_, name]) => name === controlName)?.[0];
-    if (ccNumber && midiOutput) {
-      midiOutput.send([0xB0 + channel, parseInt(ccNumber), value]); // Send MIDI
-      controlChange(controlName, value, true); // Update synth
-    }
+    noteOff(midiNumber);
   };
 
   const firstNote = MidiNumbers.fromNote("c3");
@@ -70,56 +55,48 @@ const VirtualMIDIController = () => {
     keyboardConfig: KeyboardShortcuts.HOME_ROW,
   });
 
-  const synthParams = convertMidiToSynthParams(controlValues);
-
   return (
     <div>
       <h2>Synth Piano</h2>
-      <p>Status: {synthStatus}</p>
-      <p>MIDI Status: {midiStatus}</p>
+      <p>Status: {statusMessage}</p>
       {!audioStarted && (
-        <button
-          onClick={() => {
-            setAudioStarted(true);
-            startAudio();
-          }}
-        >
+        <button onClick={startAudioAndInit}>
           Click to Enable Audio
         </button>
       )}
       <div>
         <ControlSlider
           name="Cutoff"
-          value={controlValues.cutoff}
+          value={audioEngine.controlValues.cutoff}
           onChange={(value) => handleControlChange("cutoff", value)}
           min={20}
           max={12000}
           scale="exponential"
-          midiValue={controlValues.cutoff}
+          midiValue={audioEngine.controlValues.cutoff}
         />
         <ControlSlider
           name="Resonance"
-          value={controlValues.resonance}
+          value={audioEngine.controlValues.resonance}
           onChange={(value) => handleControlChange("resonance", value)}
-          midiValue={controlValues.resonance}
+          midiValue={audioEngine.controlValues.resonance}
         />
         <ControlSlider
           name="Drive"
-          value={controlValues.drive}
+          value={audioEngine.controlValues.drive}
           onChange={(value) => handleControlChange("drive", value)}
-          midiValue={controlValues.drive}
+          midiValue={audioEngine.controlValues.drive}
         />
         <ControlSlider
           name="Oscillator Mix"
-          value={controlValues.oscillatorMix}
+          value={audioEngine.controlValues.oscillatorMix}
           onChange={(value) => handleControlChange("oscillatorMix", value)}
-          midiValue={controlValues.oscillatorMix}
+          midiValue={audioEngine.controlValues.oscillatorMix}
         />
         <ControlSlider
           name="Vibrato"
-          value={controlValues.vibrato}
+          value={audioEngine.controlValues.vibrato}
           onChange={(value) => handleControlChange("vibrato", value)}
-          midiValue={controlValues.vibrato}
+          midiValue={audioEngine.controlValues.vibrato}
         />
       </div>
       <Piano
@@ -129,7 +106,10 @@ const VirtualMIDIController = () => {
         width={600}
         keyboardShortcuts={keyboardShortcuts}
       />
-      <button onClick={connectSocket}>connect socket</button>
+      <div>
+        <button onClick={connectSocket}>connect socket</button>
+        <button onClick={clearAllNotes}>All Notes Off</button>
+      </div>
     </div>
   );
 };

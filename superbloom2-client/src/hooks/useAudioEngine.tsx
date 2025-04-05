@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import * as Tone from "tone";
 
 interface Controls {
@@ -9,14 +9,14 @@ interface Controls {
   vibrato: number;
 }
 
-export function useAudioEngine(initialControls: Partial<Controls> = {}) {
+export function useAudioEngine() {
   const [isAudioRunning, setIsAudioRunning] = useState(false);
   const synthInitialized = useRef(false);
-  const controls = useRef<Controls>({
-    cutoff: 20 * Math.pow(1.0366329, 128),
+  const [controls, setControls] = useState<Controls>({
+    cutoff: 127,
     resonance: 0,
     drive: 0,
-    oscillatorMix: 1,
+    oscillatorMix: 0,
     vibrato: 0,
   });
   const leftSynth = useRef<Tone.PolySynth | null>(null);
@@ -88,54 +88,61 @@ export function useAudioEngine(initialControls: Partial<Controls> = {}) {
 
       // Left channel effects
       const leftVibrato = new Tone.Vibrato({ frequency: 0.66, depth: 0, type: "sine" });
-      const leftPregain = new Tone.Gain(controls.current.drive);
+      const leftPregain = new Tone.Gain(controls.drive);
       const leftCharacter = createCharacterWaveshaper();
-      const leftCrossFade = new Tone.CrossFade(controls.current.drive/127);
+      const leftCrossFade = new Tone.CrossFade(controls.drive/127);
       const leftAnalyzer = new Tone.Analyser('waveform', 1024);
       const leftPanner = new Tone.Panner(-1);
 
       // Right channel effects
       const rightVibrato = new Tone.Vibrato({ frequency: 0.66, depth: 0, type: "sine" });
-      const rightPregain = new Tone.Gain(controls.current.drive);
+      const rightPregain = new Tone.Gain(controls.drive);
       const rightCharacter = createCharacterWaveshaper();
-      const rightCrossFade = new Tone.CrossFade(controls.current.drive/127);
+      const rightCrossFade = new Tone.CrossFade(controls.drive/127);
       const rightAnalyzer = new Tone.Analyser('waveform', 1024);
       const rightPanner = new Tone.Panner(1);
 
+      const params = convertMidiToSynthParams(controls);
       const rightSynthDef: Tone.PolySynthOptions<Tone.MonoSynth> = {
-          oscillator: getOscillatorType(controls.current.oscillatorMix),
-          envelope: {
-            attack: 1,
-            decay: 0.2,
-            sustain: 0.8,
-            release: 5.5,
-          },
-          filterEnvelope: {
-            attack: controls.current.cutoff / 64,
-            decay: 0.2,
-            baseFrequency: 20 * Math.pow(1.0366329, controls.current.cutoff),
-            sustain: 1,
-            release: 7.5 + controls.current.cutoff / 64,
-          },
-          filter: {
-            type: "lowpass",
-            frequency: 0,
-            rolloff: -12,
-            Q: controls.current.resonance / 3.5,
-          },
-          debug: true
-      };
+          maxPolyphony: 10,
+          voice: Tone.MonoSynth,
+          volume: 0,
+          context: Tone.getContext(),
+          options: {
+            oscillator: getOscillatorType(controls.oscillatorMix),
+            envelope: {
+              attack: 1,
+              decay: 0.2,
+              sustain: 0.8,
+              release: 5.5,
+            },
+            filterEnvelope: {
+              attack: controls.cutoff / 64,
+              decay: 0.2,
+              baseFrequency: params.cutoff,
+              sustain: 0.1,
+              release: 7.5 + controls.cutoff / 64,
+            },
+            filter: {
+              type: "lowpass",
+              frequency: 0,
+              rolloff: -12,
+              Q: params.resonance,
+            }
+          }
+      }
 
-      // Create left synth with -1 cent detune
+      // Create detuned left synth
       const leftSynthDef = {
         ...rightSynthDef, 
-        oscillator: getOscillatorType(controls.current.oscillatorMix, -4)
-        
+        options : {
+          ...rightSynthDef.options,
+          detune: -4
+        }
       };
 
-      leftSynth.current = new Tone.PolySynth(Tone.MonoSynth, leftSynthDef);
-      rightSynth.current = new Tone.PolySynth(Tone.MonoSynth, rightSynthDef);
-
+      leftSynth.current = new Tone.PolySynth(leftSynthDef);
+      rightSynth.current = new Tone.PolySynth(rightSynthDef);
       // Left signal chain
       leftSynth.current.connect(leftVibrato);
       leftVibrato.connect(leftCrossFade.a);
@@ -176,7 +183,7 @@ export function useAudioEngine(initialControls: Partial<Controls> = {}) {
   };
 
   const convertMidiToSynthParams = (controls: Controls) => {
-    return {
+    const params = {
       cutoff: 20 * Math.pow(1.0366329, controls.cutoff),
       resonance: controls.resonance / 3.5,
       drive: controls.drive * 0.09,
@@ -184,6 +191,7 @@ export function useAudioEngine(initialControls: Partial<Controls> = {}) {
       oscillatorMix: controls.oscillatorMix,
       vibratoDepth: controls.vibrato / 127,
     };
+    return params;
   };
 
   const updateSynthParams = () => {
@@ -191,14 +199,14 @@ export function useAudioEngine(initialControls: Partial<Controls> = {}) {
       return;
 
     try {
-      const params = convertMidiToSynthParams(controls.current);
+      const params = convertMidiToSynthParams(controls);
 
       // Update left synth
       leftSynth.current.set({
         filter: { Q: params.resonance },
         filterEnvelope: {
           baseFrequency: params.cutoff,
-          release: 7.5 + controls.current.cutoff / 64,
+          release: 7.5 + controls.cutoff / 64,
         },
         oscillator: getOscillatorType(params.oscillatorMix, -4), // binaural beats
       });
@@ -208,7 +216,7 @@ export function useAudioEngine(initialControls: Partial<Controls> = {}) {
         filter: { Q: params.resonance },
         filterEnvelope: {
           baseFrequency: params.cutoff,
-          release: 7.5 + controls.current.cutoff / 64,
+          release: 7.5 + controls.cutoff / 64,
         },
         oscillator: getOscillatorType(params.oscillatorMix, 0), // No detune
       });
@@ -277,9 +285,17 @@ export function useAudioEngine(initialControls: Partial<Controls> = {}) {
   };
 
   const updateControls = (newControls: Partial<Controls>) => {
-    controls.current = { ...controls.current, ...newControls };
-    updateSynthParams();
+    setControls(current => {
+      const updated = { ...current, ...newControls };
+      return updated;
+    });
   };
+
+  useEffect(() => {
+    if (isAudioRunning) {
+      updateSynthParams();
+    }
+  }, [controls]);
 
   return {
     startAudio,
@@ -288,6 +304,6 @@ export function useAudioEngine(initialControls: Partial<Controls> = {}) {
     updateControls,
     isAudioRunning,
     convertMidiToSynthParams,
-    controlValues: controls.current, // Add this line
+    controlValues: controls
   };
 }
